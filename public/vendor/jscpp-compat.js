@@ -3049,7 +3049,6 @@
     installSTLShimTypes: installSTLShimTypes,
 loadStringLib: loadStringLib,
     transpileStringSupport: transpileStringSupport,
-    ensureJSCPP: ensureJSCPP,
     getPendingSTLRegistrations: function () {
       return __pendingSTLRegistrations || [];
     },

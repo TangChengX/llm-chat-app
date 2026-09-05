@@ -1038,7 +1038,8 @@ int main() {
         cout << endl;
     }
     
-    // 动态添加行（使用临时变量避免初始化列表问题）    vector<int> newRow = {10, 11, 12};
+    // 动态添加行（使用临时变量避免初始化列表问题）
+    vector<int> newRow = {10, 11, 12};
     matrix.push_back(newRow);
     cout << "\\n添加行后:" << endl;
     for (auto& row : matrix) {
@@ -1120,7 +1121,8 @@ int main() {
     bool found = binary_search(v.begin(), v.end(), 5);
     cout << "二分查找5: " << (found ? "找到" : "未找到") << endl;
     
-    // 堆操作    vector<int> h = {3, 1, 4, 1, 5, 9, 2, 6};
+    // 堆操作
+    vector<int> h = {3, 1, 4, 1, 5, 9, 2, 6};
     make_heap(h.begin(), h.end());
     cout << "堆顶: " << h.front() << endl;
     pop_heap(h.begin(), h.end());
@@ -1139,11 +1141,13 @@ int main() {
     cout << "原字符串: " << s << endl;
     cout << "长度: " << s.size() << endl;
     
-    // C++20 新方法    cout << "starts_with 'Hel': " << (s.starts_with("Hel") ? "是" : "否") << endl;
+    // C++20 新方法
+    cout << "starts_with 'Hel': " << (s.starts_with("Hel") ? "是" : "否") << endl;
 cout << "ends_with '++!': " << (s.ends_with("++!") ? "是" : "否") << endl;
     cout << "contains 'C++': " << (s.find("C++") != string::npos ? "是" : "否") << endl;
     
-    // 大小写转换    string lower = s;
+    // 大小写转换
+    string lower = s;
     transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
     cout << "小写: " << lower << endl;
     
@@ -1161,7 +1165,8 @@ cout << "ends_with '++!': " << (s.ends_with("++!") ? "是" : "否") << endl;
     else trimmed = "";
     cout << "修剪后 '" << trimmed << "'" << endl;
     
-    // 大小写转换    string s2 = "hello";
+    // 大小写转换
+    string s2 = "hello";
 s2[0] = toupper(s2[0]);
     cout << "首字母大写 " << s2 << endl;
     
@@ -1371,7 +1376,8 @@ int main() {
     for (int x : v) cout << x << " ";
     cout << endl;
     
-    // partition - 将偶数移到前面    auto mid = partition(v.begin(), v.end(), [](int x) { return x % 2 == 0; });
+    // partition - 将偶数移到前面
+    auto mid = partition(v.begin(), v.end(), [](int x) { return x % 2 == 0; });
     cout << "partition 后(偶数在前): ";
     for (auto it = v.begin(); it != v.end(); ++it) cout << *it << " ";
     cout << endl;
@@ -1386,11 +1392,13 @@ int main() {
     for (auto it = v2.begin(); it != v2.end(); ++it) cout << *it << " ";
     cout << endl;
     
-    // nth_element - 找到中位数    vector<int> v3 = {9, 1, 5, 3, 7, 2, 8, 4, 6};
+    // nth_element - 找到中位数
+    vector<int> v3 = {9, 1, 5, 3, 7, 2, 8, 4, 6};
     nth_element(v3.begin(), v3.begin() + v3.size() / 2, v3.end());
     cout << "中位数 " << v3[v3.size() / 2] << endl;
     
-    // partial_sort - 只排前3 个最小    vector<int> v4 = {9, 1, 5, 3, 7, 2, 8, 4, 6};
+    // partial_sort - 只排前3 个最小
+    vector<int> v4 = {9, 1, 5, 3, 7, 2, 8, 4, 6};
     partial_sort(v4.begin(), v4.begin() + 3, v4.end());
     cout << "partial_sort 前3最小 ";
     for (int i = 0; i < 3; i++) cout << v4[i] << " ";
@@ -1417,7 +1425,8 @@ int main() {
     string s = "  Hello, C++ World!  ";
     cout << "原字符串: '" << s << "'" << endl;
     
-    // C++20 新方法    cout << "starts_with 'He': " << (s.starts_with("He") ? "是" : "否") << endl;
+    // C++20 新方法
+    cout << "starts_with 'He': " << (s.starts_with("He") ? "是" : "否") << endl;
 cout << "ends_with 'ld!': " << (s.ends_with("ld!") ? "是" : "否") << endl;
     cout << "contains 'C++': " << (s.find("C++") != string::npos ? "是" : "否") << endl;
     
@@ -1429,7 +1438,8 @@ cout << "ends_with 'ld!': " << (s.ends_with("ld!") ? "是" : "否") << endl;
     else trimmed = "";
     cout << "trim: '" << trimmed << "'" << endl;
     
-    // 大小写转换    string lower = "HELLO WORLD";
+    // 大小写转换
+    string lower = "HELLO WORLD";
     transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
     cout << "to_lower: " << lower << endl;
     
@@ -1669,7 +1679,8 @@ async function executeCode() {
     return;
   }
 
-  // 标准输入现在完全在终端内交互进行，不再需要预吗  let stdin = "";
+  // 标准输入现在完全在终端内交互进行，不再需要预填
+  let stdin = "";
 
   runBtn.disabled = true;
   output.className = "running";
