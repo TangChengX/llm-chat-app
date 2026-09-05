@@ -1,0 +1,1457 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AI聊天</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* ========== File Attachments ========== */
+      .attach-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+      }
+      .attach-btn:hover {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        border-color: #3f3f46;
+      }
+      .attach-btn svg { width: 18px; height: 18px; }
+
+      .attachments-preview {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        margin-bottom: 8px;
+        min-height: 40px;
+        animation: slideDown 0.2s ease;
+      }
+      @keyframes slideDown {
+        from { opacity: 0; transform: translateY(-8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .attachment-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        padding: 6px 10px;
+        font-size: 13px;
+        color: var(--text-primary);
+      }
+      .attachment-item img {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        object-fit: cover;
+      }
+      .attachment-item .file-icon {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent-muted);
+        color: var(--accent);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .attachment-item .file-name {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .attachment-item .file-size {
+        color: var(--text-muted);
+        font-size: 11px;
+      }
+      .attachment-item .remove-btn {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+      }
+      .attachment-item .remove-btn:hover {
+        background: var(--danger);
+        color: white;
+      }
+      .attachment-item .remove-btn svg { width: 12px; height: 12px; }
+
+      .drop-zone.active {
+        border-color: var(--accent) !important;
+        background: var(--accent-muted) !important;
+      }
+
+      .attachment-item .preview-btn {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+      }
+      .attachment-item .preview-btn:hover {
+        background: var(--accent-muted);
+        color: var(--accent);
+      }
+      .attachment-item .preview-btn svg { width: 12px; height: 12px; }
+
+      /* ========== Preview Modal ========== */
+      .preview-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(4px);
+        z-index: 200;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      .preview-overlay.open {
+        display: flex;
+      }
+      .preview-modal {
+        width: 100%;
+        max-width: 900px;
+        max-height: 90vh;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-subtle);
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .preview-header h3 {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .preview-close {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .preview-close:hover {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+      }
+      .preview-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .preview-image {
+        max-width: 100%;
+        max-height: 80vh;
+        object-fit: contain;
+      }
+      .preview-code {
+        flex: 1;
+        min-height: 200px;
+        max-height: 70vh;
+        overflow: auto;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 16px;
+        background: #0d1117;
+      }
+      .preview-code pre {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+        overflow: visible;
+      }
+      .preview-code code {
+        background: transparent;
+        padding: 0;
+      }
+      .preview-text {
+        flex: 1;
+        min-height: 200px;
+        max-height: 70vh;
+        overflow: auto;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 16px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .preview-actions {
+        display: flex;
+        gap: 8px;
+        padding: 8px 16px;
+        border-top: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+      }
+      .preview-action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .preview-action-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+        border-color: #3f3f46;
+      }
+      .preview-action-btn svg { width: 14px; height: 14px; }
+
+      .input-wrapper {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-xl);
+        padding: 10px 12px 10px 12px;
+        box-shadow: var(--shadow-md);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      :root {
+        /* Grok-inspired dark theme */
+        --bg-primary: #0c0c0e;
+        --bg-secondary: #141417;
+        --bg-tertiary: #1c1c21;
+        --bg-elevated: #232329;
+        --border-color: #2a2a32;
+        --border-subtle: #1f1f26;
+        
+        --text-primary: #f4f4f5;
+        --text-secondary: #a1a1aa;
+        --text-muted: #71717a;
+        
+        --accent: #a78bfa;          /* soft purple like Grok */
+        --accent-hover: #c4b5fd;
+        --accent-muted: rgba(167, 139, 250, 0.15);
+        
+        --user-bubble: #2a2a32;
+        --assistant-bubble: transparent;
+        
+        --success: #34d399;
+        --danger: #f87171;
+        
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-xl: 20px;
+        
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+        
+        --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html, body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* ========== Layout ========== */
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+        max-width: 900px;
+        margin: 0 auto;
+        position: relative;
+      }
+
+      /* ========== Header ========== */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: rgba(12, 12, 14, 0.85);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        flex-shrink: 0;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .logo-icon {
+        width: 32px;
+        height: 32px;
+        background: linear-gradient(135deg, #a78bfa 0%, #818cf8 100%);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 16px;
+        color: white;
+        box-shadow: 0 0 20px rgba(167, 139, 250, 0.3);
+      }
+
+      .logo-text {
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .logo-sub {
+        font-size: 12px;
+        color: var(--text-muted);
+        font-weight: 400;
+        margin-left: 2px;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .icon-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+      }
+
+      .icon-btn:hover {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        border-color: #3f3f46;
+      }
+
+      .icon-btn svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* ========== Chat Area ========== */
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 20px 120px;
+        scroll-behavior: smooth;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      /* Custom scrollbar */
+      .chat-messages::-webkit-scrollbar {
+        width: 6px;
+      }
+      .chat-messages::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .chat-messages::-webkit-scrollbar-thumb {
+        background: #3f3f46;
+        border-radius: 3px;
+      }
+      .chat-messages::-webkit-scrollbar-thumb:hover {
+        background: #52525b;
+      }
+
+      /* ========== Message ========== */
+      .message {
+        display: flex;
+        gap: 14px;
+        max-width: 100%;
+        animation: fadeIn 0.25s ease;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .message.user {
+        flex-direction: row-reverse;
+      }
+
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .message.assistant .avatar {
+        background: linear-gradient(135deg, #a78bfa 0%, #818cf8 100%);
+        color: white;
+        box-shadow: 0 0 12px rgba(167, 139, 250, 0.25);
+      }
+
+      .message.user .avatar {
+        background: var(--bg-elevated);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
+      }
+
+      .message-content {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .message.user .message-content {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .bubble {
+        padding: 12px 16px;
+        border-radius: var(--radius-lg);
+        font-size: 15px;
+        line-height: 1.65;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+      }
+
+      .message.assistant .bubble {
+        background: transparent;
+        padding: 4px 0;
+        padding-right: 72px; /* room for copy btn */
+        color: var(--text-primary);
+        max-width: 100%;
+      }
+
+      .message.assistant .bubble.is-thinking {
+        padding-right: 0;
+      }
+
+      .message.user .bubble {
+        background: var(--user-bubble);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        max-width: 85%;
+        border-bottom-right-radius: 6px;
+      }
+
+      .message.user .message-content {
+        padding-left: 72px; /* room for copy btn on left */
+      }
+
+      /* Markdown-ish styles inside assistant messages */
+      .bubble p {
+        margin-bottom: 0.75em;
+      }
+      .bubble p:last-child {
+        margin-bottom: 0;
+      }
+      .bubble code {
+        background: var(--bg-tertiary);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+      }
+      .bubble pre {
+        background: var(--bg-tertiary);
+        padding: 36px 14px 12px; /* top room for copy btn */
+        border-radius: var(--radius-md);
+        overflow-x: auto;
+        margin: 10px 0;
+        border: 1px solid var(--border-color);
+      }
+      .bubble pre code {
+        background: none;
+        padding: 0;
+      }
+      .bubble strong {
+        font-weight: 600;
+        color: #f4f4f5;
+      }
+      .bubble em {
+        font-style: italic;
+        color: #d4d4d8;
+      }
+      .bubble .list-item {
+        margin: 4px 0;
+        padding-left: 4px;
+      }
+      .bubble .list-num {
+        color: var(--text-secondary);
+        margin-right: 4px;
+      }
+
+      /* ========== Copy buttons ========== */
+      .message-content {
+        position: relative;
+      }
+
+      .msg-copy-btn {
+        position: absolute;
+        top: 0;
+        right: 0;
+        opacity: 0;
+        pointer-events: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--text-secondary);
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+        z-index: 5;
+      }
+
+      .message:hover .msg-copy-btn,
+      .msg-copy-btn:focus {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .msg-copy-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+        border-color: #3f3f46;
+      }
+
+      .msg-copy-btn.copied {
+        opacity: 1;
+        pointer-events: auto;
+        color: var(--success);
+        border-color: rgba(52, 211, 153, 0.4);
+      }
+
+      .msg-copy-btn svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+      }
+
+      /* user message: button on the left side of bubble area */
+      .message.user .msg-copy-btn {
+        right: auto;
+        left: 0;
+      }
+
+      /* code block toolbar */
+      .bubble pre {
+        position: relative;
+      }
+
+      .code-toolbar {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        gap: 6px;
+        z-index: 2;
+      }
+
+      .code-copy-btn,
+      .code-run-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-family: inherit;
+        color: var(--text-muted);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        opacity: 0.75;
+        transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+      }
+
+      .code-run-btn {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        color: var(--accent);
+      }
+
+      .code-run-btn:hover {
+        color: var(--accent-hover);
+        background: var(--accent-muted);
+        border-color: rgba(167, 139, 250, 0.4);
+        opacity: 1;
+      }
+
+      /* triangle play icon */
+      .code-run-btn .play-icon {
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 6px 0 6px 10px;
+        border-color: transparent transparent transparent currentColor;
+        margin-left: 2px;
+      }
+
+      .bubble pre:hover .code-copy-btn,
+      .bubble pre:hover .code-run-btn,
+      .code-copy-btn:hover,
+      .code-copy-btn:focus,
+      .code-run-btn:focus {
+        opacity: 1;
+      }
+
+      .code-copy-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+      }
+
+      .code-copy-btn.copied {
+        color: var(--success);
+        opacity: 1;
+      }
+
+      .code-copy-btn svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      @media (max-width: 640px) {
+        .msg-copy-btn {
+          opacity: 0.85;
+          pointer-events: auto;
+        }
+        .code-copy-btn,
+        .code-run-btn {
+          opacity: 0.9;
+        }
+      }
+
+
+      /* AI 消息代码高亮 */
+      .bubble pre code.hljs {
+        background: transparent;
+        padding: 0;
+        font-weight: 400;
+      }
+      .bubble pre code.hljs .hljs-keyword,
+      .bubble pre code.hljs .hljs-built_in,
+      .bubble pre code.hljs .hljs-type,
+      .bubble pre code.hljs .hljs-section {
+        font-weight: 700;
+      }
+      .bubble pre {
+        background: #0d1117;
+      }
+
+      /* 运行器交互式输入条 */
+      .runner-interactive-input {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 0 0;
+        margin-top: 10px;
+        border-top: 1px solid #21262d;
+        background: transparent;
+        flex-shrink: 0;
+      }
+      .runner-interactive-input.active {
+        display: flex;
+      }
+      .runner-interactive-input .prompt-text {
+        color: var(--accent);
+        font-size: 13px;
+        font-family: 'SF Mono', Consolas, monospace;
+        white-space: nowrap;
+        max-width: 40%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #runner-live-input {
+        flex: 1;
+        background: var(--bg-primary);
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        color: var(--text-primary);
+        padding: 8px 12px;
+        font-size: 13px;
+        font-family: 'SF Mono', Consolas, monospace;
+        outline: none;
+      }
+      #runner-live-submit {
+        padding: 8px 14px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      #runner-live-submit:hover {
+        background: var(--accent-hover);
+      }
+
+      /* ========== Code Runner Modal ========== */
+      .runner-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+
+      .runner-overlay.open {
+        display: flex;
+      }
+
+      .runner-modal {
+        width: 100%;
+        max-width: 720px;
+        max-height: min(90vh, 800px);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .runner-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-subtle);
+        gap: 12px;
+        flex-shrink: 0;
+      }
+
+      .runner-header h3 {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .runner-lang {
+        font-size: 12px;
+        color: var(--accent);
+        background: var(--accent-muted);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 500;
+      }
+
+      .runner-header-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .runner-close {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .runner-close:hover {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+      }
+
+      .runner-body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .runner-editor-wrap {
+        flex: 1;
+        min-height: 180px;
+        max-height: 40vh;
+        border-bottom: 1px solid var(--border-subtle);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #runner-editor {
+        display: none; /* replaced by CodeMirror */
+      }
+
+      .runner-editor-wrap .CodeMirror {
+        flex: 1 1 auto;
+        height: 100%;
+        min-height: 180px;
+        max-height: 40vh;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+        font-size: 13px;
+        line-height: 1.55;
+        background: #0d1117;
+        color: #c9d1d9;
+      }
+
+      .runner-editor-wrap .CodeMirror-scroll {
+        min-height: 180px;
+        max-height: 40vh;
+        overflow: auto !important;
+      }
+
+      /* 长代码块可独立滚动，避免撑破聊天窗口 */
+      .bubble pre {
+        max-height: min(65vh, 720px);
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .bubble pre code {
+        display: block;
+        min-width: max-content;
+      }
+
+      .runner-editor-wrap .CodeMirror-gutters {
+        background: #0d1117;
+        border-right: 1px solid var(--border-subtle);
+      }
+
+      .runner-editor-wrap .CodeMirror-linenumber {
+        color: #52525b;
+      }
+
+      /* 与 AI 消息代码块使用的 highlight.js github-dark 配色保持一致 */
+      .cm-s-material-darker .CodeMirror-cursor {
+        border-left: 1px solid #c9d1d9;
+      }
+      .cm-s-material-darker .cm-keyword,
+      .cm-s-material-darker .cm-qualifier,
+      .cm-s-material-darker .cm-type,
+      .cm-s-material-darker .cm-tag {
+        color: #ff7b72;
+        font-weight: 700;
+      }
+      .cm-s-material-darker .cm-def {
+        color: #d2a8ff;
+        font-weight: 600;
+      }
+      .cm-s-material-darker .cm-builtin,
+      .cm-s-material-darker .cm-variable-3 {
+        color: #ffa657;
+        font-weight: 600;
+      }
+      .cm-s-material-darker .cm-string,
+      .cm-s-material-darker .cm-string-2 {
+        color: #a5d6ff;
+      }
+      .cm-s-material-darker .cm-number {
+        color: #79c0ff;
+      }
+      .cm-s-material-darker .cm-comment {
+        color: #8b949e;
+        font-style: italic;
+      }
+      .cm-s-material-darker .cm-operator {
+        color: #79c0ff;
+      }
+      .cm-s-material-darker .cm-meta,
+      .cm-s-material-darker .cm-atom {
+        color: #79c0ff;
+      }
+      .cm-s-material-darker .cm-variable,
+      .cm-s-material-darker .cm-variable-2,
+      .cm-s-material-darker .cm-property {
+        color: #c9d1d9;
+      }
+      .cm-s-material-darker .cm-bracket {
+        color: #c9d1d9;
+      }
+
+      .runner-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+        flex-wrap: wrap;
+      }
+
+      .runner-run-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.15s ease, transform 0.1s ease;
+      }
+
+      .runner-run-btn:hover:not(:disabled) {
+        background: var(--accent-hover);
+        transform: scale(1.02);
+      }
+
+      .runner-run-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .runner-run-btn .play-icon {
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 6px 0 6px 10px;
+        border-color: transparent transparent transparent currentColor;
+      }
+
+      .runner-stdin-label {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      #runner-stdin {
+        flex: 1;
+        min-width: 120px;
+        max-width: 280px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-primary);
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: 'SF Mono', Consolas, monospace;
+        outline: none;
+      }
+
+      #runner-stdin:focus {
+        border-color: #4c4c56;
+      }
+
+      .runner-template-select {
+        flex: 1;
+        min-width: 140px;
+        max-width: 220px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-primary);
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: 'SF Mono', Consolas, monospace;
+        outline: none;
+        cursor: pointer;
+      }
+      .runner-template-select:focus {
+        border-color: #4c4c56;
+      }
+      .runner-template-select option {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+      }
+
+      .runner-action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .runner-action-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+        border-color: #3f3f46;
+      }
+      .runner-action-btn svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .runner-output-wrap {
+        flex: 1;
+        min-height: 120px;
+        max-height: 35vh;
+        overflow: auto;
+        padding: 12px 16px;
+        background: #0a0a0c;
+        display: flex;
+        flex-direction: column;
+      }
+      #runner-output {
+        flex: 1;
+        overflow: auto;
+      }
+
+      .runner-output-label {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      #runner-output {
+        font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #e4e4e7;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+
+      #runner-output.error {
+        color: #fca5a5;
+      }
+
+      #runner-output.running {
+        color: var(--text-muted);
+      }
+      /* AI 两个字时稍微缩小字号 */
+      .message.assistant .avatar {
+        font-size: 12px;
+        letter-spacing: -0.02em;
+      }
+
+      /* ========== AI思考中 ========== */
+      .bubble.is-thinking {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
+        font-size: 14px;
+        padding: 8px 0;
+      }
+
+      .thinking-label {
+        color: var(--text-muted);
+      }
+
+      .typing-dots {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .typing-dots span {
+        width: 5px;
+        height: 5px;
+        background: var(--text-muted);
+        border-radius: 50%;
+        animation: bounce 1.4s infinite ease-in-out both;
+      }
+
+      .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+      .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+      @keyframes bounce {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+        40% { transform: scale(1); opacity: 1; }
+      }
+
+      /* ========== Input Area ========== */
+      .input-area {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 16px 20px 24px;
+        background: linear-gradient(to top, var(--bg-primary) 70%, transparent);
+        z-index: 10;
+      }
+
+      .input-wrapper {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-xl);
+        padding: 10px 12px 10px 16px;
+        box-shadow: var(--shadow-md);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .input-wrapper:focus-within {
+        border-color: #4c4c56;
+        box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12), var(--shadow-md);
+      }
+
+      #user-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 15px;
+        line-height: 1.5;
+        resize: none;
+        max-height: 160px;
+        padding: 6px 0;
+        min-height: 24px;
+      }
+
+      #user-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      #send-button {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: all 0.15s ease;
+      }
+
+      #send-button:hover:not(:disabled) {
+        background: var(--accent-hover);
+        transform: scale(1.04);
+      }
+
+      #send-button:disabled {
+        background: var(--bg-elevated);
+        color: var(--text-muted);
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      #send-button svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .input-hint {
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 10px;
+        letter-spacing: 0.01em;
+      }
+
+      /* ========== Empty state ========== */
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--text-secondary);
+      }
+
+      .empty-state .logo-icon {
+        width: 56px;
+        height: 56px;
+        font-size: 24px;
+        margin-bottom: 20px;
+        border-radius: 16px;
+      }
+
+      .empty-state h2 {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+        letter-spacing: -0.02em;
+      }
+
+      .empty-state p {
+        font-size: 15px;
+        max-width: 360px;
+        line-height: 1.6;
+      }
+
+      /* ========== Responsive ========== */
+      @media (max-width: 640px) {
+        header {
+          padding: 10px 14px;
+        }
+        .chat-messages {
+          padding: 16px 14px 130px;
+          gap: 22px;
+        }
+        .input-area {
+          padding: 12px 12px 20px;
+        }
+        .message.user .bubble {
+          max-width: 90%;
+        }
+        .logo-sub {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- Header -->
+      <header>
+        <div class="logo">
+          <div class="logo-icon">AI</div>
+          <div>
+            <span class="logo-text">AI聊天</span>
+            
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="clear-btn" title="清空对话">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Messages -->
+      <div id="chat-messages" class="chat-messages">
+        <!-- Initial welcome will be injected by JS -->
+      </div>
+
+      <!-- Input -->
+      <div class="input-area">
+        <div class="attachments-preview" id="attachments-preview" style="display: none;"></div>
+        <div class="input-wrapper">
+          <button class="attach-btn" id="attach-btn" title="附加文件" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+          </button>
+          <textarea
+            id="user-input"
+            placeholder="有什么我可以帮你的？"
+            rows="1"
+            autofocus
+          ></textarea>
+          <button id="send-button" disabled title="发送">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+            </svg>
+          </button>
+        </div>
+        <div class="input-hint">Enter 发送 · Shift + Enter 换行 · 可拖拽或点击 📎 上传文件（文本、图片、PDF）</div>
+      </div>
+    </div>
+
+    <!-- Code Runner Modal -->
+    <div class="runner-overlay" id="runner-overlay">
+      <div class="runner-modal" role="dialog" aria-modal="true">
+        <div class="runner-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <h3>在线运行</h3>
+            <span class="runner-lang" id="runner-lang-label">python</span>
+          </div>
+          <div class="runner-header-actions">
+            <button class="runner-action-btn" id="runner-clear-output" title="清空输出">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span>清空</span>
+            </button>
+            <button class="runner-action-btn" id="runner-copy-output" title="复制输出" style="font-size:11px;padding:4px 8px;">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
+            <button class="runner-close" id="runner-close" title="关闭">&times;</button>
+          </div>
+        </div>
+        <div class="runner-body">
+          <div class="runner-editor-wrap">
+            <textarea id="runner-editor" spellcheck="false"></textarea>
+          </div>
+          <div class="runner-controls">
+            <button class="runner-run-btn" id="runner-run-btn">
+              <span class="play-icon"></span>
+              运行
+            </button>
+            <select id="runner-template" class="runner-template-select" title="选择模板">
+              <option value="">模板...</option>
+              <option value="cpp_hello">C++ Hello World</option>
+              <option value="cpp_vector">C++ Vector Demo</option>
+              <option value="cpp_sort">C++ Sort Demo</option>
+              <option value="cpp_string">C++ String Demo</option>
+              <option value="cpp_nested">C++ Nested Vector</option>
+              <option value="c_hello">C Hello World</option>
+              <option value="py_hello">Python Hello World</option>
+              <option value="py_fib">Python Fibonacci</option>
+            </select>
+            <span class="runner-hint" style="color:var(--text-muted);font-size:12px;">输入将在下方终端交互进行（如 Windows CMD）</span>
+          </div>
+          <div class="runner-output-wrap">
+            <div class="runner-output-label">输出 / 终端</div>
+            <pre id="runner-output">点击「运行」在浏览器中执行（无需外部 API）</pre>
+            <div class="runner-interactive-input" id="runner-interactive-input">
+              <span class="prompt-text" id="runner-prompt-text">&gt;&gt;&gt;</span>
+              <input type="text" id="runner-live-input" placeholder="在此输入，按 Enter 确认" autocomplete="off" />
+              <button type="button" id="runner-live-submit">Enter</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="preview-overlay" id="preview-overlay">
+      <div class="preview-modal" role="dialog" aria-modal="true">
+        <div class="preview-header">
+          <h3 id="preview-title">预览</h3>
+          <button class="preview-close" id="preview-close" title="关闭">&times;</button>
+        </div>
+        <div class="preview-body" id="preview-body"></div>
+        <div class="preview-actions">
+          <button class="preview-action-btn" id="preview-copy" title="复制内容">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span>复制</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <input type="file" id="file-input" multiple style="display: none;" accept=".txt,.md,.csv,.json,.js,.ts,.py,.cpp,.c,.h,.hpp,.java,.go,.rs,.html,.css,.xml,.yaml,.yml,.pdf,.png,.jpg,.jpeg,.gif,.webp" />
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+    <!-- C++ 兼容层：与 chat.js 同目录相对路径，保证部署后可加载 -->
+    <script src="vendor/jscpp-compat.js?v=20260825"></script>
+    <script src="chat.js?v=20260825"></script>
+  </body>
+</html>
