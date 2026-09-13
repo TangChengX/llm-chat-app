@@ -200,10 +200,18 @@
    * 初始化列表转译：Type var = {a, b}; / Type var{a, b}; / func({a, b})
    * 转为声明 + 连续 push_back / 临时变量
    * ------------------------------------------------------------------ */
-  function transpileInitializerLists(code) {
+  function transpileInitializerLists(code, registrations) {
     var out = code;
 
-    // 辅助：提取平衡大括号内的内容
+    // alias -> 元素类型 token，供嵌套初始化列表 {{...}} 递归展开时使用
+    var aliasElemType = {};
+    (registrations || []).forEach(function (r) {
+      if (r.kind === "vector" && r.elems && r.elems.length === 1) {
+        aliasElemType[r.alias] = r.elems[0];
+      }
+    });
+
+    // 辅助：提取平衡大括号内的内容（支持嵌套 {}）
     function extractBraceContent(text, start) {
       var depth = 0;
       var i = start;
@@ -219,18 +227,79 @@
       return null;
     }
 
-    // 1. 变量声明初始化列表：Type name = { ... }; / Type name{ ... };
-    // 匹配：Type name = { ... } ; 或 Type name { ... } ;
-    var declInitRe = /\b([A-Za-z_]\w*(?:\s*<[^>]+>)?)\s+([A-Za-z_]\w*)\s*(?:=\s*|)\{([^}]*)\}\s*;/g;
-    out = out.replace(declInitRe, function (mm, type, name, content) {
-      if (!content.trim()) return type + " " + name + ";";
-      var elems = content.split(",").map(function (e) { return e.trim(); });
+    // 按顶层逗号切分，尊重 {}/()/<> 嵌套（与 splitTopLevelComma 不同，这里还要认 {}）
+    function splitTopLevelCommaBraces(text) {
+      var parts = [];
+      var depth = 0;
+      var last = 0;
+      for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (ch === "{" || ch === "(" || ch === "<") depth++;
+        else if (ch === "}" || ch === ")" || ch === ">") depth--;
+        else if (ch === "," && depth === 0) {
+          parts.push(text.slice(last, i));
+          last = i + 1;
+        }
+      }
+      parts.push(text.slice(last));
+      return parts.map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    }
+
+    var tempCounter = 0;
+    // 递归展开 "type name = { elems };"，elems 中的元素若本身是 {...}（嵌套初始化列表），
+    // 则先为其生成一个内层类型的临时变量再 push_back，从而支持 vector<vector<int>> 这类嵌套容器。
+    function expandDecl(type, name, content) {
       var lines = type + " " + name + ";";
+      if (!content.trim()) return lines;
+      var elems = splitTopLevelCommaBraces(content);
+      var elemType = aliasElemType[type];
       elems.forEach(function (e) {
-        if (e) lines += " " + name + ".push_back(" + e + ");";
+        if (e[0] === "{" && e[e.length - 1] === "}") {
+          var innerContent = e.slice(1, -1);
+          var tempName = "__ilist_nested_" + tempCounter++;
+          var innerType = elemType || "auto";
+          lines += " " + expandDecl(innerType, tempName, innerContent);
+          lines += " " + name + ".push_back(" + tempName + ");";
+        } else {
+          lines += " " + name + ".push_back(" + e + ");";
+        }
       });
       return lines;
-    });
+    }
+
+    // 1. 变量声明初始化列表：Type name = { ... }; / Type name{ ... };
+    //    用平衡括号扫描代替朴素正则，以正确支持嵌套 {{...}} 的写法。
+    var declStartRe = /\b([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*(=\s*)?\{/g;
+    var result = "";
+    var lastIndex = 0;
+    var m;
+    while ((m = declStartRe.exec(out))) {
+      var braceStart = m.index + m[0].length - 1;
+      var type = m[1];
+      var name = m[2];
+      if (/^(if|for|while|switch|catch|return|else|do)$/.test(type)) {
+        declStartRe.lastIndex = braceStart + 1;
+        continue;
+      }
+      var extracted = extractBraceContent(out, braceStart);
+      if (!extracted) {
+        declStartRe.lastIndex = braceStart + 1;
+        continue;
+      }
+      var afterBrace = out.slice(extracted.end + 1);
+      var semiMatch = /^\s*;/.exec(afterBrace);
+      if (!semiMatch) {
+        declStartRe.lastIndex = braceStart + 1;
+        continue;
+      }
+      result += out.slice(lastIndex, m.index);
+      result += expandDecl(type, name, extracted.content);
+      var consumedEnd = extracted.end + 1 + semiMatch[0].length;
+      lastIndex = consumedEnd;
+      declStartRe.lastIndex = consumedEnd;
+    }
+    result += out.slice(lastIndex);
+    out = result;
 
     // 2. 函数调用中的初始化列表：push_back({...}) / insert(pos, {...}) 等
     // 简化：生成临时变量 __ilist_N
@@ -249,11 +318,20 @@
 
     return out;
   }
-  function transpileRangeFor(code, registryMap) {
+  function transpileRangeFor(code, registryMap, registrations) {
     var out = "";
     var i = 0;
     var counter = 0;
     var forRe = /\bfor\s*\(/g;
+
+    // alias -> 元素类型（用于变量声明类型是某个容器别名时，推断出正确的循环变量类型，
+    // 而不是笼统地退化成 int —— 这对 vector<vector<int>> 这类嵌套容器尤其重要）
+    var aliasElemType = {};
+    (registrations || []).forEach(function (r) {
+      if (r.kind === "vector" && r.elems && r.elems.length === 1) {
+        aliasElemType[r.alias] = r.elems[0];
+      }
+    });
 
     // 简单的类型推断：从容器表达式推断元素类型
     function inferElementType(expr) {
@@ -270,6 +348,15 @@
       // 数组或 C 风格数组
       if (/\[\s*\]/.test(expr) || /\[\s*\d+\s*\]/.test(expr)) {
         return "int"; // 无法确定，默认 int
+      }
+      // 此时容器模板已被别名化（如 vector<vector<int>> -> __vector___vector_int），
+      // expr 通常只是一个简单变量名。尝试在代码中找到它的声明，再用别名表反查元素类型。
+      if (/^[A-Za-z_]\w*$/.test(expr)) {
+        var declRe = new RegExp("\\b([A-Za-z_]\\w*)\\s+" + expr + "\\b");
+        var declMatch = declRe.exec(code);
+        if (declMatch && aliasElemType.hasOwnProperty(declMatch[1])) {
+          return aliasElemType[declMatch[1]];
+        }
       }
       return "auto"; // 无法推断
     }
@@ -661,27 +748,35 @@
       "$1.__algo_accumulate($2)"
     );
     out = out.replace(
+      /\*\s*(?:std::)?min_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1[$1.__algo_min_element()]"
+    );
+    out = out.replace(
       /\b(?:std::)?min_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
       "$1.__algo_min_element()"
     );
     out = out.replace(
+      /\*\s*(?:std::)?max_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1[$1.__algo_max_element()]"
+    );
+    out = out.replace(
       /\b(?:std::)?max_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
       "$1.__algo_max_element()"
     );
 
+    // transform(v.begin(), v.end(), v.begin(), tolower/toupper)：
+    // 常见的字符串大小写转换写法。tolower/toupper 作为裸函数名传递时，
+    // 这个简化版 C++ 解释器不支持函数指针取值，因此在转译阶段直接特判成专用方法。
     out = out.replace(
-      /\b(?:std::)?max_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
-      "$1.__algo_max_element()"
+      /\b(?:std::)?transform\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*\1\s*\.\s*begin\s*\(\s*\)\s*,\s*(?:::)?tolower\s*\)/g,
+      "$1.__str_tolower()"
+    );
+    out = out.replace(
+      /\b(?:std::)?transform\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*\1\s*\.\s*begin\s*\(\s*\)\s*,\s*(?:::)?toupper\s*\)/g,
+      "$1.__str_toupper()"
     );
 
     // transform(v.begin(), v.end(), out.begin(), func)
-    out = out.replace(
-      /\b(?:std::)?transform\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\)/g,
-      function (match, src, dst, func) {
-        return dst + ".transform(" + src + ", " + func + ")";
-      }
-    );
-    // transform 单参数版本
     out = out.replace(
       /\b(?:std::)?transform\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\)/g,
       function (match, src, dst, func) {
@@ -779,6 +874,16 @@
       "$1.is_sorted_until()"
     );
 
+    // nth_element(v.begin(), v.begin()+k, v.end()) / partial_sort(v.begin(), v.begin()+k, v.end())
+    out = out.replace(
+      /\b(?:std::)?nth_element\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*begin\s*\(\s*\)\s*\+\s*([^,]+?)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.__algo_nth_element($2, $1.size())"
+    );
+    out = out.replace(
+      /\b(?:std::)?partial_sort\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*begin\s*\(\s*\)\s*\+\s*([^,]+?)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.__algo_partial_sort($2, $1.size())"
+    );
+
     // includes
     out = out.replace(
       /\b(?:std::)?includes\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*\)/g,
@@ -794,6 +899,20 @@
       /\b(?:std::)?mismatch\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*\)/g,
       "$1.mismatch($2)"
     );
+    // mismatch 在真实 C++ 里返回 pair<iterator,iterator>，这里简化为返回下标（int）。
+    // 为了让 `auto mm = ...mismatch(...); mm.first` 这种写法也能用，
+    // 先找出这样声明的变量名，再把跟在其后的 .first / .second 访问替换成变量本身。
+    (function () {
+      var mismatchVarRe = /\bauto\s+([A-Za-z_]\w*)\s*=\s*[A-Za-z_]\w*\s*\.\s*mismatch\s*\([^;]*\)\s*;/g;
+      var names = [];
+      var mm2;
+      while ((mm2 = mismatchVarRe.exec(out))) names.push(mm2[1]);
+      names.forEach(function (varName) {
+        var re1 = new RegExp("\\b" + varName + "\\s*\\.\\s*first\\b", "g");
+        var re2 = new RegExp("\\b" + varName + "\\s*\\.\\s*second\\b", "g");
+        out = out.replace(re1, varName).replace(re2, varName);
+      });
+    })();
 
     // search / search_n
     out = out.replace(
@@ -822,6 +941,54 @@
     // 裸 sort(v) 等（部分教学代码）
     out = out.replace(/\b(?:std::)?sort\s*\(\s*([A-Za-z_]\w*)\s*\)/g, "$1.__algo_sort()");
     out = out.replace(/\b(?:std::)?reverse\s*\(\s*([A-Za-z_]\w*)\s*\)/g, "$1.__algo_reverse()");
+
+    // heap 操作（自由函数写法）
+    out = out.replace(
+      /\b(?:std::)?make_heap\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.__algo_make_heap()"
+    );
+    out = out.replace(
+      /\b(?:std::)?push_heap\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.__algo_push_heap()"
+    );
+    out = out.replace(
+      /\b(?:std::)?pop_heap\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.pop_heap()"
+    );
+    out = out.replace(
+      /\b(?:std::)?sort_heap\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.sort_heap()"
+    );
+    out = out.replace(
+      /\b(?:std::)?is_heap_until\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.is_heap_until()"
+    );
+    out = out.replace(
+      /\b(?:std::)?is_heap\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*\)/g,
+      "$1.is_heap()"
+    );
+
+    // set 操作 / merge：结果写入 back_inserter(dst) 的写法
+    out = out.replace(
+      /\b(?:std::)?set_union\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*,\s*(?:std::)?back_inserter\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)/g,
+      "$3.set_union($1, $2)"
+    );
+    out = out.replace(
+      /\b(?:std::)?set_intersection\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*,\s*(?:std::)?back_inserter\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)/g,
+      "$3.set_intersection($1, $2)"
+    );
+    out = out.replace(
+      /\b(?:std::)?set_difference\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*,\s*(?:std::)?back_inserter\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)/g,
+      "$3.set_difference($1, $2)"
+    );
+    out = out.replace(
+      /\b(?:std::)?set_symmetric_difference\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*,\s*(?:std::)?back_inserter\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)/g,
+      "$3.set_symmetric_difference($1, $2)"
+    );
+    out = out.replace(
+      /\b(?:std::)?merge\s*\(\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\1\s*\.\s*end\s*\(\s*\)\s*,\s*([A-Za-z_]\w*)\s*\.\s*begin\s*\(\s*\)\s*,\s*\2\s*\.\s*end\s*\(\s*\)\s*,\s*(?:std::)?back_inserter\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)/g,
+      "$3.merge($1, $2)"
+    );
 
     return out;
   }
@@ -968,7 +1135,7 @@
       "unsigned char": rt.primitiveType("unsigned char"),
       "signed char": rt.primitiveType("signed char"),
       // 别名
-      size_t: rt.primitiveType("unsigned long"),
+      size_t: rt.primitiveType("long"),
       "unsigned long int": rt.primitiveType("unsigned long"),
       ll: rt.primitiveType("long long"),
       LL: rt.primitiveType("long long"),
@@ -976,13 +1143,7 @@
       ull: rt.primitiveType("unsigned long long"),
       ULL: rt.primitiveType("unsigned long long"),
       // std::string 支持（通过 loadStringLib 注入）
-      string: (function () {
-        for (var k in rt.types) {
-          var tt = rt.types[k];
-          if (tt && tt.name === "string") return tt;
-        }
-        return null;
-      })(),
+      string: rt.__stringTypeToken || null,
     };
     return map[t] || null;
   }
@@ -1048,6 +1209,7 @@
     ]);
     var sig = rt.getTypeSignature(strType);
     rt.types[sig].father = "object";
+    rt.__stringTypeToken = strType;
 
     function slot(self) {
       if (!self.v) self.v = {};
@@ -1090,10 +1252,19 @@
 
     H["o([])"] = {
       default: function (rt, self, idx) {
-        var s = slot(self).v;
+        var s = slot(self);
         var i = Math.trunc(idx.v);
-        if (i < 0 || i >= s.length) rt.raiseException("string index out of range: " + i);
-        return rt.val(rt.charTypeLiteral, s.charCodeAt(i));
+        if (i < 0 || i >= s.v.length) rt.raiseException("string index out of range: " + i);
+        // JS 字符串不可变，没法像数组那样返回真正的引用；
+        // 这里用 getter/setter 模拟左值：写入时把新字符拼回底层字符串。
+        var cell = { t: rt.charTypeLiteral, left: true };
+        Object.defineProperty(cell, "v", {
+          get: function () { return s.v.charCodeAt(i); },
+          set: function (newVal) { s.v = s.v.slice(0, i) + String.fromCharCode(newVal) + s.v.slice(i + 1); },
+          enumerable: true,
+          configurable: true,
+        });
+        return cell;
       },
     };
 
@@ -1109,6 +1280,9 @@
     reg("pop_back", [], V, function (rt, self) { var d = slot(self); d.v = d.v.slice(0, -1); });
     reg("append", [strType], strType, function (rt, self, s2) { var d = slot(self); d.v = d.v + toStr(rt, s2); return self; });
     reg("append", [charPtr], strType, function (rt, self, s2) { var d = slot(self); d.v = d.v + toStr(rt, s2); return self; });
+    // 配合 transform(s.begin(), s.end(), s.begin(), tolower/toupper) 这种写法的转译目标
+    reg("__str_tolower", [], rt.voidTypeLiteral, function (rt, self) { var d = slot(self); d.v = d.v.toLowerCase(); });
+    reg("__str_toupper", [], rt.voidTypeLiteral, function (rt, self) { var d = slot(self); d.v = d.v.toUpperCase(); });
     reg("assign", [strType], strType, function (rt, self, s2) { slot(self).v = toStr(rt, s2); return self; });
     reg("assign", [charPtr], strType, function (rt, self, s2) { slot(self).v = toStr(rt, s2); return self; });
     reg("compare", [strType], I, function (rt, self, s2) { var a = slot(self).v, b = toStr(rt, s2); return rt.val(I, a < b ? -1 : a > b ? 1 : 0); });
@@ -1130,6 +1304,11 @@
       var start = pos === undefined ? 0 : Math.trunc(pos.v);
       return rt.val(I, s.indexOf(toStr(rt, s2), start));
     }, strType, "find", [charPtr, "?"], I, [{ type: I }]);
+    rt.regFunc(function (rt, self, ch, pos) {
+      var s = slot(self).v;
+      var start = pos === undefined ? 0 : Math.trunc(pos.v);
+      return rt.val(I, s.indexOf(String.fromCharCode(rt.cast(C, ch).v), start));
+    }, strType, "find", [C, "?"], I, [{ type: I }]);
     reg("at", [I], C, function (rt, self, i) { var s = slot(self).v; var k = Math.trunc(i.v); if (k < 0 || k >= s.length) rt.raiseException("string::at out of range"); return rt.val(C, s.charCodeAt(k)); });
     reg("c_str", [], charPtr, function (rt, self) { return rt.val(charPtr, rt.makeCharArrayFromString(slot(self).v).v); });
     reg("insert", [I, strType], V, function (rt, self, pos, s2) { var d = slot(self); var p = Math.trunc(pos.v); d.v = d.v.slice(0, p) + toStr(rt, s2) + d.v.slice(p); });
@@ -1152,6 +1331,41 @@
       var start = pos === undefined ? s.length - 1 : Math.trunc(pos.v);
       return rt.val(I, s.lastIndexOf(toStr(rt, s2), start));
     });
+    reg("rfind", [C, "?"], I, function (rt, self, ch, pos) {
+      var s = slot(self).v;
+      var start = pos === undefined ? s.length - 1 : Math.trunc(pos.v);
+      return rt.val(I, s.lastIndexOf(String.fromCharCode(rt.cast(C, ch).v), start));
+    });
+
+    // find_first_of / find_last_of / find_first_not_of / find_last_not_of
+    function findFirstOf(rt, self, chars, pos, negate) {
+      var s = slot(self).v;
+      var set = toStr(rt, chars);
+      var start = pos === undefined ? 0 : Math.trunc(pos.v);
+      for (var i = start; i < s.length; i++) {
+        var hit = set.indexOf(s[i]) !== -1;
+        if (hit !== negate) return rt.val(I, i);
+      }
+      return rt.val(I, -1);
+    }
+    function findLastOf(rt, self, chars, pos, negate) {
+      var s = slot(self).v;
+      var set = toStr(rt, chars);
+      var start = pos === undefined ? s.length - 1 : Math.trunc(pos.v);
+      for (var i = Math.min(start, s.length - 1); i >= 0; i--) {
+        var hit = set.indexOf(s[i]) !== -1;
+        if (hit !== negate) return rt.val(I, i);
+      }
+      return rt.val(I, -1);
+    }
+    reg("find_first_of", [strType, "?"], I, function (rt, self, c, p) { return findFirstOf(rt, self, c, p, false); });
+    reg("find_first_of", [charPtr, "?"], I, function (rt, self, c, p) { return findFirstOf(rt, self, c, p, false); });
+    reg("find_last_of", [strType, "?"], I, function (rt, self, c, p) { return findLastOf(rt, self, c, p, false); });
+    reg("find_last_of", [charPtr, "?"], I, function (rt, self, c, p) { return findLastOf(rt, self, c, p, false); });
+    reg("find_first_not_of", [strType, "?"], I, function (rt, self, c, p) { return findFirstOf(rt, self, c, p, true); });
+    reg("find_first_not_of", [charPtr, "?"], I, function (rt, self, c, p) { return findFirstOf(rt, self, c, p, true); });
+    reg("find_last_not_of", [strType, "?"], I, function (rt, self, c, p) { return findLastOf(rt, self, c, p, true); });
+    reg("find_last_not_of", [charPtr, "?"], I, function (rt, self, c, p) { return findLastOf(rt, self, c, p, true); });
 
     reg("replace", [I, I, strType], strType, function (rt, self, pos, len, s2) {
       var d = slot(self);
@@ -1169,7 +1383,7 @@
     });
 
     // split (简化版，按单字符分隔符)
-    reg("split", [charPtr], elemType, function (rt, self, delim) {
+    reg("split", [charPtr], strType, function (rt, self, delim) {
       var s = slot(self).v;
       var d = String(rt.cast(charPtr, delim).v || "");
       var parts = d ? s.split(d) : s.split("");
@@ -1182,15 +1396,7 @@
     });
 
     // join (简化版)
-    reg("join", [elemType], strType, function (rt, self, vec) {
-      var a = arr(vec);
-      var parts = [];
-      for (var i = 0; i < a.length; i++) parts.push(toStr(rt, a[i]));
-      return mk(rt, parts.join(toStr(rt, self)));
-    });
-
-    // join (简化版)
-    reg("join", [elemType], strType, function (rt, self, vec) {
+    reg("join", [strType], strType, function (rt, self, vec) {
       var a = arr(vec);
       var parts = [];
       for (var i = 0; i < a.length; i++) parts.push(toStr(rt, a[i]));
@@ -1250,7 +1456,7 @@
     });
 
     // 正则表达式相关 (简化版)
-    reg("match", [charPtr], elemType, function (rt, self, pattern) {
+    reg("match", [charPtr], strType, function (rt, self, pattern) {
       var s = slot(self).v;
       try {
         var regex = new RegExp(toStr(rt, pattern));
@@ -1311,6 +1517,7 @@
     }
 
     // ---- 全局自由函数（回调签名为 (rt, 占位, 参数...)） ----
+    rt.regFunc(function (rt, _p, n, ch) { var count = Math.max(0, Math.trunc(rt.cast(I, n).v)); return mk(rt, new Array(count + 1).join(String.fromCharCode(rt.cast(C, ch).v))); }, "global", "__make_string_fill", [I, C], strType);
     rt.regFunc(function (rt, _p, x) { return mk(rt, String(rt.cast(rt.doubleTypeLiteral, x).v)); }, "global", "to_string", [rt.doubleTypeLiteral], strType);
     rt.regFunc(function (rt, _p, s) { var m = /^\s*[+-]?\d+/.exec(toStr(rt, s)); if (!m) rt.raiseException("stoi: invalid argument"); return rt.val(I, parseInt(m[0], 10)); }, "global", "stoi", [strType], I);
     rt.regFunc(function (rt, _p, s) { var m = /^\s*[+-]?\d+/.exec(toStr(rt, s)); if (!m) rt.raiseException("stoi: invalid argument"); return rt.val(I, parseInt(m[0], 10)); }, "global", "stoi", [charPtr], I);
@@ -1362,6 +1569,11 @@
         });
         return res;
       });
+    // string(count, ch) 填充构造：转成全局辅助函数调用（count 表达式允许一层嵌套括号，如 x.size()）
+    out = out.replace(
+      /\bstring\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*,\s*('(?:\\.|[^\\'])*')\s*\)/g,
+      "__make_string_fill($1, $2)"
+    );
     // 反向拼接交换
     out = out.replace(/"((?:\\.|[^"\\])*)"\s*\+\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*(?:\s*\([^()]*\))?)/g, "$2 + \"$1\"");
     return out;
@@ -1372,7 +1584,33 @@
    * ------------------------------------------------------------------ */
   var __pendingSTLRegistrations = [];
 
+  function installMissingMathFunctions(rt) {
+    var D = rt.doubleTypeLiteral;
+    function reg1(name, fn) {
+      rt.regFunc(function (rt, _p, x) { return rt.val(D, fn(rt.cast(D, x).v)); }, "global", name, [D], D);
+    }
+    function reg2(name, fn) {
+      rt.regFunc(function (rt, _p, x, y) { return rt.val(D, fn(rt.cast(D, x).v, rt.cast(D, y).v)); }, "global", name, [D, D], D);
+    }
+    // JSCPP 内置 <cmath> 未提供的函数，这里补齐
+    reg1("log2", Math.log2);
+    reg1("cbrt", Math.cbrt);
+    reg1("trunc", Math.trunc);
+    reg1("round", Math.round);
+    reg2("hypot", Math.hypot);
+    reg2("fmod", function (a, b) { return a % b; });
+    reg2("fmax", Math.max);
+    reg2("fmin", Math.min);
+    reg2("remainder", function (a, b) { return a - b * Math.round(a / b); });
+    reg2("copysign", function (a, b) { return (b < 0 || Object.is(b, -0)) ? -Math.abs(a) : Math.abs(a); });
+  }
+
   function installSTLShimTypes(rt, registrations) {
+    installMissingMathFunctions(rt);
+    // 确保 string 类型在容器（如 vector<string>）注册解析之前已经存在：
+    // __stl_shim 总是被无条件插入到源码最前面，早于用户自己的 #include <string>，
+    // 若不在这里提前加载，resolveSTLElementType 解析 "string" 元素类型时会找不到该类型。
+    loadStringLib(rt);
     var createdTypes = {};
 
     function regContainerMethods(cType, sig, elemType, kind) {
@@ -1462,6 +1700,18 @@
         return makeDefaultElem();
       }
 
+      // 整体赋值 a = b（拷贝底层元素数组，容器/queue/stack/priority_queue 通用）
+      if (!rt.types[sig].handlers) rt.types[sig].handlers = {};
+      rt.types[sig].handlers["o(=)"] = {
+        default: function (rt, self, rhs) {
+          var src = arr(rhs);
+          var dst = arr(self);
+          dst.length = 0;
+          for (var i = 0; i < src.length; i++) dst.push(copyElem(src[i]));
+          return self;
+        },
+      };
+
       // 判断元素类型是否为 pair（别名形如 __pair_K_V，不能用 name === "pair" 判断）
       function isPairElemType() {
         try {
@@ -1479,6 +1729,16 @@
         rt.regFunc(function (rt, self, x) {
           arr(self).push(copyElem(x));
         }, cType, "push_back", [elemType], rt.voidTypeLiteral);
+
+        // vector<string> 时额外支持直接 push_back 一个 C 字符串字面量（char*）
+        if (rt.__stringTypeToken && elemType === rt.__stringTypeToken) {
+          var __charPtrForPush = rt.normalPointerType(rt.charTypeLiteral);
+          rt.regFunc(function (rt, self, x) {
+            var jsStr = "";
+            try { jsStr = rt.getStringFromCharArray(x); } catch (e) {}
+            arr(self).push({ t: elemType, v: { members: { data: { t: rt.intTypeLiteral, v: jsStr } } }, left: false });
+          }, cType, "push_back", [__charPtrForPush], rt.voidTypeLiteral);
+        }
 
         rt.regFunc(function (rt, self, x) {
           arr(self).push(copyElem(x));
@@ -1761,6 +2021,20 @@
           }
         }, cType, "__algo_make_heap", [], rt.voidTypeLiteral);
 
+        // push_heap(first, last)：假定最后一个元素刚被 push_back，只需把它向上浮
+        rt.regFunc(function (rt, self) {
+          var a = arr(self);
+          var idx = a.length - 1;
+          while (idx > 0) {
+            var p = (idx - 1) >> 1;
+            if (elemKey(a[p]) >= elemKey(a[idx])) break;
+            var tmp = a[p];
+            a[p] = a[idx];
+            a[idx] = tmp;
+            idx = p;
+          }
+        }, cType, "__algo_push_heap", [], rt.voidTypeLiteral);
+
         rt.regFunc(function (rt, self, value) {
           var a = arr(self);
           a.push(copyElem(arguments[2]));
@@ -1838,7 +2112,7 @@
           return rt.val(rt.intTypeLiteral, a.length);
         }, cType, "is_heap_until", [], rt.intTypeLiteral);
 
-        // iota
+        // nth_element
         rt.regFunc(function (rt, self, nth, last) {
           var a = arr(self);
           var nthIdx = rt.cast(rt.intTypeLiteral, nth).v;
@@ -1905,7 +2179,7 @@
               a[i] = makeDefaultElem();
             }
           }
-        }, cType, "transform", [rt.getTypeSignature(strType), rt.getTypeSignature(strType)], rt.voidTypeLiteral);
+        }, cType, "transform", [cType, rt.voidTypeLiteral], rt.voidTypeLiteral);
 
         // copy: dst.copy_from(src)
         rt.regFunc(function (rt, self, src) {
@@ -1915,7 +2189,7 @@
           for (var i = 0; i < len; i++) {
             a[i] = copyElem(srcArr[i]);
           }
-        }, cType, "copy_from", [elemType], rt.voidTypeLiteral);
+        }, cType, "copy_from", [cType], rt.voidTypeLiteral);
 
         // generate
         rt.regFunc(function (rt, self, func) {
@@ -1929,16 +2203,6 @@
             }
           }
         }, cType, "generate", [rt.voidTypeLiteral], rt.voidTypeLiteral);
-
-        // iota
-        rt.regFunc(function (rt, self, initVal) {
-          var a = arr(self);
-          var val = rt.cast(elemType, initVal).v;
-          for (var i = 0; i < a.length; i++) {
-            a[i] = { t: elemType, v: val, left: true };
-            val = val + 1;
-          }
-        }, cType, "__algo_iota", [elemType], rt.voidTypeLiteral);
 
         // for_each
         rt.regFunc(function (rt, self, func) {
@@ -1966,7 +2230,7 @@
           while (i < s1.length) a[k++] = copyElem(s1[i++]);
           while (j < s2.length) a[k++] = copyElem(s2[j++]);
           a.length = k;
-        }, cType, "merge", [elemType, elemType], rt.voidTypeLiteral);
+        }, cType, "merge", [cType, cType], rt.voidTypeLiteral);
 
         // inplace_merge
         rt.regFunc(function (rt, self, middle) {
@@ -2001,7 +2265,7 @@
           while (i < s1.length) a[k++] = copyElem(s1[i++]);
           while (j < s2.length) a[k++] = copyElem(s2[j++]);
           a.length = k;
-        }, cType, "set_union", [elemType, elemType], rt.voidTypeLiteral);
+        }, cType, "set_union", [cType, cType], rt.voidTypeLiteral);
 
         // set_intersection
         rt.regFunc(function (rt, self, src1, src2) {
@@ -2016,7 +2280,7 @@
             else { a[k++] = copyElem(s1[i++]); j++; }
           }
           a.length = k;
-        }, cType, "set_intersection", [elemType, elemType], rt.voidTypeLiteral);
+        }, cType, "set_intersection", [cType, cType], rt.voidTypeLiteral);
 
         // set_difference
         rt.regFunc(function (rt, self, src1, src2) {
@@ -2032,7 +2296,7 @@
           }
           while (i < s1.length) a[k++] = copyElem(s1[i++]);
           a.length = k;
-        }, cType, "set_difference", [elemType, elemType], rt.voidTypeLiteral);
+        }, cType, "set_difference", [cType, cType], rt.voidTypeLiteral);
 
         // set_symmetric_difference
         rt.regFunc(function (rt, self, src1, src2) {
@@ -2049,37 +2313,7 @@
           while (i < s1.length) a[k++] = copyElem(s1[i++]);
           while (j < s2.length) a[k++] = copyElem(s2[j++]);
           a.length = k;
-        }, cType, "set_symmetric_difference", [elemType, elemType], rt.voidTypeLiteral);
-
-        // merge: dst.merge(src1, src2)
-        rt.regFunc(function (rt, self, src1, src2) {
-          var a = arr(self);
-          var s1 = arr(src1);
-          var s2 = arr(src2);
-          var i = 0, j = 0, k = 0;
-          while (i < s1.length && j < s2.length) {
-            if (elemKey(s1[i]) <= elemKey(s2[j])) a[k++] = copyElem(s1[i++]);
-            else a[k++] = copyElem(s2[j++]);
-          }
-          while (i < s1.length) a[k++] = copyElem(s1[i++]);
-          while (j < s2.length) a[k++] = copyElem(s2[j++]);
-          a.length = k;
-        }, cType, "merge", [elemType, elemType], rt.voidTypeLiteral);
-
-        // inplace_merge
-        rt.regFunc(function (rt, self, middle) {
-          var a = arr(self);
-          var mid = rt.cast(rt.intTypeLiteral, middle).v;
-          var left = a.slice(0, mid);
-          var right = a.slice(mid);
-          var i = 0, j = 0, k = 0;
-          while (i < left.length && j < right.length) {
-            if (elemKey(left[i]) <= elemKey(right[j])) a[k++] = copyElem(left[i++]);
-            else a[k++] = copyElem(right[j++]);
-          }
-          while (i < left.length) a[k++] = copyElem(left[i++]);
-          while (j < right.length) a[k++] = copyElem(right[j++]);
-        }, cType, "inplace_merge", [rt.intTypeLiteral], rt.voidTypeLiteral);
+        }, cType, "set_symmetric_difference", [cType, cType], rt.voidTypeLiteral);
 
         // lexicographical_compare
         rt.regFunc(function (rt, self, other) {
@@ -2092,7 +2326,7 @@
             if (va > vb) return rt.val(rt.boolTypeLiteral, false);
           }
           return rt.val(rt.boolTypeLiteral, a.length < b.length);
-        }, cType, "lexicographical_compare", [elemType], rt.boolTypeLiteral);
+        }, cType, "lexicographical_compare", [cType], rt.boolTypeLiteral);
 
         // is_sorted
         rt.regFunc(function (rt, self) {
@@ -2124,7 +2358,7 @@
             else { i++; j++; }
           }
           return rt.val(rt.boolTypeLiteral, j === b.length);
-        }, cType, "includes", [elemType], rt.boolTypeLiteral);
+        }, cType, "includes", [cType], rt.boolTypeLiteral);
 
         // equal
         rt.regFunc(function (rt, self, other) {
@@ -2135,9 +2369,9 @@
             if (elemKey(a[i]) !== elemKey(b[i])) return rt.val(rt.boolTypeLiteral, false);
           }
           return rt.val(rt.boolTypeLiteral, true);
-        }, cType, "equal", [elemType], rt.boolTypeLiteral);
+        }, cType, "equal", [cType], rt.boolTypeLiteral);
 
-        // mismatch
+        // mismatch：返回下标（配合下方 transpileAlgorithms 里对 .first/.second 的文本替换使用）
         rt.regFunc(function (rt, self, other) {
           var a = arr(self);
           var b = arr(other);
@@ -2146,7 +2380,7 @@
             if (elemKey(a[i]) !== elemKey(b[i])) return rt.val(rt.intTypeLiteral, i);
           }
           return rt.val(rt.intTypeLiteral, n);
-        }, cType, "mismatch", [elemType], rt.intTypeLiteral);
+        }, cType, "mismatch", [cType], rt.intTypeLiteral);
 
         // search
         rt.regFunc(function (rt, self, pattern) {
@@ -2161,7 +2395,7 @@
             if (match) return rt.val(rt.intTypeLiteral, i);
           }
           return rt.val(rt.intTypeLiteral, a.length);
-        }, cType, "search", [elemType], rt.intTypeLiteral);
+        }, cType, "search", [cType], rt.intTypeLiteral);
 
         // rotate
         rt.regFunc(function (rt, self, middle) {
@@ -2889,7 +3123,11 @@
       [/\bstd::unitbuf\b/g, "unitbuf"],
       [/\bstd::nounitbuf\b/g, "nounitbuf"],
       [/\bstd::internal\b/g, "internal"],
-      [/\bstd::size_t\b/g, "unsigned long"],
+      [/\bstd::size_t\b/g, "long"],
+      [/(?:std)?::\s*tolower\b/g, "tolower"],
+      [/(?:std)?::\s*toupper\b/g, "toupper"],
+      [/\bstd::string::npos\b/g, "(-1)"],
+      [/\bstring::npos\b/g, "(-1)"],
       [/\bstd::ptrdiff_t\b/g, "long"],
       [/\bstd::nullptr_t\b/g, "void*"],
       [/\bstd::int8_t\b/g, "signed char"],
@@ -2980,17 +3218,17 @@
 
     // 7. 迭代器风格 for + range-for
     out = transpileIteratorFor(out);
-    out = transpileRangeFor(out, registryMap);
+    out = transpileRangeFor(out, registryMap, registrations);
 
     // 7. 初始化列表转译
-    out = transpileInitializerLists(out);
+    out = transpileInitializerLists(out, registrations);
 
     // 8. auto
     out = transpileAuto(out);
 
     // 9. 额外类型别名与 string 常用写法兼容
     out = out
-      .replace(/\bsize_t\b/g, "unsigned long")
+      .replace(/\bsize_t\b/g, "long")
       .replace(/\bptrdiff_t\b/g, "long")
       .replace(/\bnullptr\b/g, "0");
 
@@ -3033,9 +3271,9 @@
     }
 
     __pendingSTLRegistrations = registrations;
-    if (registrations.length) {
-      out = "#include <__stl_shim>\n" + out;
-    }
+    // 无论是否用到容器都无条件注入：__stl_shim 钩子里还负责补齐
+    // JSCPP 缺失的数学函数（log2/cbrt/hypot 等）和 string 类型的预加载。
+    out = "#include <__stl_shim>\n" + out;
 
     return out;
   }

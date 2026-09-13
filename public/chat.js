@@ -4,7 +4,8 @@
  * No remote execution API required.
  *
  * C++ 编译器运行时已整合到 public/vendor/jscpp-compat.js
- * 通过 window.JSCPPCompat.CompilerRuntime 使用吗 */
+ * 通过 window.JSCPPCompat.CompilerRuntime 使用。
+ */
 
 const WELCOME_MESSAGE =
   "你好！我是由 Cloudflare Workers AI 驱动的助手。有什么我可以帮你的吗？";
@@ -902,7 +903,7 @@ function initRunnerModal() {
     if (e.key === "Escape" && overlay.classList.contains("open")) closeRunner();
   });
 
-  // CodeMirror：语法高吗+ Tab 缩进
+  // CodeMirror：语法高亮 + Tab 缩进
   if (typeof CodeMirror !== "undefined") {
     runnerCM = CodeMirror.fromTextArea(textarea, {
       lineNumbers: true,
@@ -930,7 +931,7 @@ function initRunnerModal() {
       if (runnerCM) runnerCM.refresh();
     }, 0);
   } else {
-    // 降级：原吗textarea 支持 Tab
+    // 降级：原生 textarea 支持 Tab
     textarea.addEventListener("keydown", function (e) {
       if (e.key === "Tab") {
         e.preventDefault();
@@ -965,12 +966,12 @@ int main() {
     cout << endl;
     
     sort(v.begin(), v.end());
-    cout << "排序吗 ";
+    cout << "排序后: ";
     for (int x : v) cout << x << " ";
     cout << endl;
     
     v.push_back(10);
-    cout << "添加10吗 ";
+    cout << "添加10后: ";
     for (int x : v) cout << x << " ";
     cout << endl;
     return 0;
@@ -1012,7 +1013,7 @@ int main() {
     cout << "substr(7,3): " << s2 << endl;
     
     s.append(" Welcome!");
-    cout << "append吗 " << s << endl;
+    cout << "append后: " << s << endl;
     
     // 查找
     size_t pos = s.find("C++");
@@ -1134,6 +1135,7 @@ int main() {
   cpp_string_advanced: `#include <iostream>
 #include <string>
 #include <algorithm>
+#include <cctype>
 using namespace std;
 
 int main() {
@@ -1223,48 +1225,53 @@ int max_val = v.back();
     return 0;
 }`,
   cpp_random: `#include <iostream>
-#include <random>
 #include <vector>
-#include <algorithm>
+#include <cstdlib>
+#include <ctime>
 using namespace std;
 
 int main() {
-    // 随机数引擎    random_device rd;
-    mt19937 gen(rd()); // 梅森旋转算法
-    
-    // 均匀分布
-    uniform_int_distribution<> dis_int(1, 100);
+    srand(42); // 固定种子，方便复现结果演示
+
+    // 生成指定范围内的随机整数：rand() % (max - min + 1) + min
     cout << "随机整数 (1-100): ";
-    for (int i = 0; i < 5; i++) cout << dis_int(gen) << " ";
+    for (int i = 0; i < 5; i++) cout << (rand() % 100 + 1) << " ";
     cout << endl;
-    
-    uniform_real_distribution<> dis_real(0.0, 1.0);
+
+    // 生成 [0, 1) 之间的随机浮点数
     cout << "随机浮点数(0-1): ";
-    for (int i = 0; i < 5; i++) cout << dis_real(gen) << " ";
+    for (int i = 0; i < 5; i++) cout << (double)rand() / RAND_MAX << " ";
     cout << endl;
-    
-    // 正态分布    normal_distribution<> dis_norm(0.0, 1.0);
-    cout << "正态分布(均值, 标准差): ";
-    for (int i = 0; i < 5; i++) cout << dis_norm(gen) << " ";
-    cout << endl;
-    
-    // 打乱序列
+
+    // 打乱序列（经典 Fisher-Yates 洗牌算法）
     vector<int> cards = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-    random_device rd2;
-    mt19937 gen2(rd2());
-    shuffle(cards.begin(), cards.end(), gen2);
-    cout << "洗牌后 ";
+    for (int i = cards.size() - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int tmp = cards[i];
+        cards[i] = cards[j];
+        cards[j] = tmp;
+    }
+    cout << "洗牌后: ";
     for (int x : cards) cout << x << " ";
     cout << endl;
-    
-    // sample (C++17)
-    vector<int> population = {1,2,3,4,5,6,7,8,9,10};
+
+    // 随机采样（从序列中不重复地随机取几个元素）
+    vector<int> population = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    vector<int> used;
+    for (int i = 0; i < (int)population.size(); i++) used.push_back(0);
     vector<int> sample_out;
-    sample(population.begin(), population.end(), back_inserter(sample_out), 5, gen);
-    cout << "随机采样5个 ";
+    int sample_count = 5;
+    while ((int)sample_out.size() < sample_count) {
+        int idx = rand() % population.size();
+        if (used[idx] == 0) {
+            used[idx] = 1;
+            sample_out.push_back(population[idx]);
+        }
+    }
+    cout << "随机采样5个: ";
     for (int x : sample_out) cout << x << " ";
     cout << endl;
-    
+
     return 0;
 }`,
   cpp_math: `#include <iostream>
@@ -1376,20 +1383,27 @@ int main() {
     for (int x : v) cout << x << " ";
     cout << endl;
     
-    // partition - 将偶数移到前面
-    auto mid = partition(v.begin(), v.end(), [](int x) { return x % 2 == 0; });
+    // partition - 将偶数移到前面（这里手写实现，等价于标准库 partition 的效果）
+    vector<int> partitioned;
+    for (int x : v) if (x % 2 == 0) partitioned.push_back(x);
+    int mid = partitioned.size();
+    for (int x : v) if (x % 2 != 0) partitioned.push_back(x);
+    v = partitioned;
     cout << "partition 后(偶数在前): ";
-    for (auto it = v.begin(); it != v.end(); ++it) cout << *it << " ";
+    for (int x : v) cout << x << " ";
     cout << endl;
     cout << "偶数部分: ";
-    for (auto it = v.begin(); it != mid; ++it) cout << *it << " ";
+    for (int i = 0; i < mid; i++) cout << v[i] << " ";
     cout << endl;
     
-    // stable_partition - 保持相对顺序
+    // stable_partition - 保持相对顺序（写法与上面相同，天然保持了相对顺序）
     vector<int> v2 = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-    auto mid2 = stable_partition(v2.begin(), v2.end(), [](int x) { return x % 2 == 0; });
+    vector<int> stable_partitioned;
+    for (int x : v2) if (x % 2 == 0) stable_partitioned.push_back(x);
+    for (int x : v2) if (x % 2 != 0) stable_partitioned.push_back(x);
+    v2 = stable_partitioned;
     cout << "stable_partition 后 ";
-    for (auto it = v2.begin(); it != v2.end(); ++it) cout << *it << " ";
+    for (int x : v2) cout << x << " ";
     cout << endl;
     
     // nth_element - 找到中位数
@@ -1407,7 +1421,7 @@ int main() {
     // is_sorted
     vector<int> sorted = {1, 2, 3, 4, 5};
     vector<int> unsorted = {1, 3, 2, 4, 5};
-cout << "is_sorted sorted: " << (is_sorted(sorted.begin(), sorted.end()) ? "是" : "否") << endl;
+    cout << "is_sorted sorted: " << (is_sorted(sorted.begin(), sorted.end()) ? "是" : "否") << endl;
     cout << "is_sorted unsorted: " << (is_sorted(unsorted.begin(), unsorted.end()) ? "是" : "否") << endl;
     
     // is_sorted_until
@@ -1419,6 +1433,7 @@ cout << "is_sorted sorted: " << (is_sorted(sorted.begin(), sorted.end()) ? "是"
   cpp_string_extra: `#include <iostream>
 #include <string>
 #include <vector>
+#include <cctype>
 using namespace std;
 
 int main() {
@@ -1432,8 +1447,8 @@ cout << "ends_with 'ld!': " << (s.ends_with("ld!") ? "是" : "否") << endl;
     
     // 修剪
     string trimmed = s;
-    auto start = trimmed.find_first_not_of(" \t\n\r");
-    auto end = trimmed.find_last_not_of(" \t\n\r");
+    auto start = trimmed.find_first_not_of(" \\t\\n\\r");
+    auto end = trimmed.find_last_not_of(" \\t\\n\\r");
     if (start != string::npos) trimmed = trimmed.substr(start, end - start + 1);
     else trimmed = "";
     cout << "trim: '" << trimmed << "'" << endl;
@@ -1470,8 +1485,8 @@ cout << "ends_with 'ld!': " << (s.ends_with("ld!") ? "是" : "否") << endl;
     
     // replace
     string replace_demo = "I like apples";
-    size_t pos = replace_demo.find("apples");
-    if (pos != string::npos) replace_demo.replace(pos, 6, "oranges");
+    size_t pos2 = replace_demo.find("apples");
+    if (pos2 != string::npos) replace_demo.replace(pos2, 6, "oranges");
     cout << "replace: " << replace_demo << endl;
     
     // rfind
@@ -1552,7 +1567,9 @@ function setRunnerMode(langKey) {
 
 /**
  * C++ 兼容层已移至 public/vendor/jscpp-compat.js
- * 通过 window.JSCPPCompat 提供 preprocess / installSTLShimTypes 吗API吗 * 此处仅保留薄包装，保吗chat.js 调用方式不变吗 */
+ * 通过 window.JSCPPCompat 提供 preprocess / installSTLShimTypes 等API。
+ * 此处仅保留薄包装，保证 chat.js 调用方式不变。
+ */
 function preprocessCppForJSCPP(code) {
   if (typeof JSCPPCompat === "undefined" || typeof JSCPPCompat.preprocess !== "function") {
     throw new Error("JSCPP 兼容层未加载，请确认 /vendor/jscpp-compat.js 已正确引入");
