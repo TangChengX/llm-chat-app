@@ -67,6 +67,8 @@ let pyodideLoading = null;
 
 // DOM elements (initialized in initDOM)
 let chatMessages, userInput, sendButton, clearBtn, attachBtn, fileInput, attachmentsPreview;
+let plusMenuWrapper, plusMenu, menuUploadFile, menuGenerateImage, imageModeBadge, imageModeExit, inputWrapper;
+let imageGenMode = false;
 
 // 全局错误上报：任何未捕获脚本错误都打印到控制台并标记到标题，避免静默失败
 window.addEventListener("error", function (e) {
@@ -94,6 +96,13 @@ document.addEventListener("DOMContentLoaded", function () {
   attachBtn = document.getElementById("attach-btn");
   fileInput = document.getElementById("file-input");
   attachmentsPreview = document.getElementById("attachments-preview");
+  plusMenuWrapper = document.getElementById("plus-menu-wrapper");
+  plusMenu = document.getElementById("plus-menu");
+  menuUploadFile = document.getElementById("menu-upload-file");
+  menuGenerateImage = document.getElementById("menu-generate-image");
+  imageModeBadge = document.getElementById("image-mode-badge");
+  imageModeExit = document.getElementById("image-mode-exit");
+  inputWrapper = document.getElementById("input-wrapper");
   previewOverlay = document.getElementById("preview-overlay");
   previewBody = document.getElementById("preview-body");
   previewTitle = document.getElementById("preview-title");
@@ -103,6 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
   renderWelcome();
   initRunnerModal();
   initFileUpload();
+  initPlusMenu();
   initPreviewModal();
   initChatEvents();
 
@@ -131,9 +141,6 @@ function updateSendButton() {
 }
 
 function initFileUpload() {
-  // Attach button click
-  attachBtn.addEventListener("click", () => fileInput.click());
-
   // File input change
   fileInput.addEventListener("change", (e) => {
     handleFiles(Array.from(e.target.files));
@@ -193,6 +200,7 @@ function getFileIcon(file) {
 }
 
 async function handleFiles(files) {
+  if (imageGenMode) setImageGenMode(false);
   const maxSize = 10 * 1024 * 1024; // 10MB
   const allowedTypes = [
     "text/",
@@ -477,6 +485,54 @@ function closePreview() {
   previewTitle.textContent = "预览";
 }
 
+function initPlusMenu() {
+  // 移动端没有 hover，用点击切换菜单展开/收起；桌面端可以用 CSS :hover，
+  // 但点击也要能正常工作（比如触屏笔记本），所以统一用 click 切换 "open" 类。
+  attachBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = !plusMenuWrapper.classList.contains("open");
+    plusMenuWrapper.classList.toggle("open", willOpen);
+    attachBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
+
+  // 点击菜单外部关闭菜单
+  document.addEventListener("click", (e) => {
+    if (!plusMenuWrapper.contains(e.target)) {
+      plusMenuWrapper.classList.remove("open");
+      attachBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  function closeMenu() {
+    plusMenuWrapper.classList.remove("open");
+    attachBtn.setAttribute("aria-expanded", "false");
+  }
+
+  menuUploadFile.addEventListener("click", () => {
+    closeMenu();
+    fileInput.click();
+  });
+
+  menuGenerateImage.addEventListener("click", () => {
+    closeMenu();
+    setImageGenMode(true);
+    userInput.focus();
+  });
+
+  imageModeExit.addEventListener("click", () => {
+    setImageGenMode(false);
+    userInput.focus();
+  });
+}
+
+function setImageGenMode(active) {
+  imageGenMode = active;
+  imageModeBadge.classList.toggle("active", active);
+  inputWrapper.classList.toggle("image-mode", active);
+  userInput.placeholder = active ? "描述你想生成的图片…" : "有什么我可以帮你的？";
+  updateSendButton();
+}
+
 function initPreviewModal() {
   if (!previewClose) return;
   previewClose.addEventListener("click", closePreview);
@@ -505,6 +561,7 @@ function initChatEvents() {
     renderAttachmentsPreview();
     chatMessages.innerHTML = "";
     renderWelcome();
+    setImageGenMode(false);
     userInput.focus();
   });
 }
@@ -521,6 +578,8 @@ function thinkingHTML() {
 }
 
 async function sendMessage() {
+  if (imageGenMode) return sendImagePrompt();
+
   const message = userInput.value.trim();
   if (message === "" && pendingAttachments.length === 0) return;
   if (isProcessing) return;
@@ -639,6 +698,65 @@ chatHistory.push({
     console.error("Error:", error);
     bubble.classList.remove("is-thinking");
     bubble.innerHTML = formatContent("抱歉，处理请求时出现了错误。请稍后再试");
+  } finally {
+    isProcessing = false;
+    userInput.disabled = false;
+    attachBtn.disabled = false;
+    updateSendButton();
+    userInput.focus();
+  }
+}
+
+async function sendImagePrompt() {
+  const prompt = userInput.value.trim();
+  if (prompt === "" || isProcessing) return;
+
+  isProcessing = true;
+  userInput.disabled = true;
+  sendButton.disabled = true;
+  attachBtn.disabled = true;
+
+  addMessageToChat("user", prompt, []);
+  chatHistory.push({ role: "user", content: prompt });
+
+  userInput.value = "";
+  userInput.style.height = "auto";
+
+  const assistantEl = createMessageElement("assistant", "");
+  const bubble = assistantEl.querySelector(".bubble");
+  bubble.classList.add("is-thinking");
+  bubble.innerHTML =
+    '<span class="thinking-label">图片正在生成</span>' +
+    '<span class="typing-dots"><span></span><span></span><span></span></span>';
+  chatMessages.appendChild(assistantEl);
+  scrollToBottom();
+
+  try {
+    const response = await fetch("/api/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data || !data.image) {
+      throw new Error((data && data.error) || "图片生成失败");
+    }
+
+    bubble.classList.remove("is-thinking");
+    const imgSrc = "data:image/jpeg;base64," + data.image;
+    bubble.innerHTML =
+      '<img src="' + imgSrc + '" alt="' + escapeHtml(prompt) +
+      '" style="max-width:100%;border-radius:12px;display:block;" />';
+
+    const copyBtn = assistantEl.querySelector(".msg-copy-btn");
+    if (copyBtn) copyBtn.remove();
+
+    chatHistory.push({ role: "assistant", content: "[已生成图片：" + prompt + "]" });
+  } catch (error) {
+    console.error("Error:", error);
+    bubble.classList.remove("is-thinking");
+    bubble.innerHTML = formatContent("抱歉，图片生成失败，请稍后再试。");
   } finally {
     isProcessing = false;
     userInput.disabled = false;

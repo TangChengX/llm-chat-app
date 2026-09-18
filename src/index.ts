@@ -7,12 +7,13 @@
  *
  * @license MIT
  */
-import { Env, ChatMessage, ChatRequest } from "./types";
+import { Env, ChatMessage, ChatRequest, ImageRequest } from "./types";
 
 // Model IDs for Workers AI models
 // https://developers.cloudflare.com/workers-ai/models/
 const TEXT_MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
+const IMAGE_MODEL_ID = "@cf/black-forest-labs/flux-1-schnell";
 
 // Default system prompt
 const SYSTEM_PROMPT =
@@ -45,6 +46,13 @@ export default {
       }
 
       // Method not allowed for other request types
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (url.pathname === "/api/image") {
+      if (request.method === "POST") {
+        return handleImageRequest(request, env);
+      }
       return new Response("Method not allowed", { status: 405 });
     }
 
@@ -120,6 +128,49 @@ function buildTextMessages(messages: ChatMessage[]): any[] {
     }
     return { role: msg.role, content: msg.content };
   });
+}
+
+/**
+ * Handles image generation API requests using Cloudflare Workers AI.
+ */
+async function handleImageRequest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  try {
+    const { prompt } = (await request.json()) as ImageRequest;
+
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      return new Response(JSON.stringify({ error: "缺少图片生成提示词" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // Flux Schnell returns { image: <base64 JPEG> } directly, no need to
+    // deal with a raw byte stream like the Stable Diffusion family.
+    const result = await env.AI.run(IMAGE_MODEL_ID, {
+      prompt: prompt.slice(0, 2000),
+    });
+
+    const image = (result as { image?: string })?.image;
+    if (!image) {
+      throw new Error("模型未返回图片数据");
+    }
+
+    return new Response(JSON.stringify({ image }), {
+      headers: { "content-type": "application/json" },
+    });
+  } catch (error) {
+    console.error("Error processing image request:", error);
+    return new Response(
+      JSON.stringify({ error: "图片生成失败，请稍后再试" }),
+      {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
 }
 
 /**

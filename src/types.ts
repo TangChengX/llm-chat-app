@@ -40,3 +40,10 @@ export interface ChatMessage {
 export interface ChatRequest {
   messages: ChatMessage[];
 }
+
+/**
+ * Request body for the image generation API.
+ */
+export interface ImageRequest {
+  prompt: string;
+}

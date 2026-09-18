@@ -17,7 +17,7 @@
       .attach-btn {
         width: 36px;
         height: 36px;
-        border-radius: 10px;
+        border-radius: 50%;
         border: 1px solid var(--border-color);
         background: var(--bg-tertiary);
         color: var(--text-secondary);
@@ -28,12 +28,109 @@
         transition: all 0.15s ease;
         flex-shrink: 0;
       }
-      .attach-btn:hover {
+      .attach-btn:hover,
+      .plus-menu-wrapper.open .attach-btn {
         background: var(--bg-elevated);
         color: var(--text-primary);
         border-color: #3f3f46;
       }
-      .attach-btn svg { width: 18px; height: 18px; }
+      .attach-btn svg { width: 18px; height: 18px; transition: transform 0.15s ease; }
+      .plus-menu-wrapper:hover .attach-btn svg,
+      .plus-menu-wrapper.open .attach-btn svg {
+        transform: rotate(45deg);
+      }
+
+      /* ========== Plus button expandable menu ========== */
+      .plus-menu-wrapper {
+        position: relative;
+        display: flex;
+        flex-shrink: 0;
+      }
+      .plus-menu {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 8px);
+        left: 0;
+        min-width: 180px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-md);
+        padding: 6px;
+        flex-direction: column;
+        gap: 2px;
+        z-index: 20;
+      }
+      .plus-menu-wrapper:hover .plus-menu,
+      .plus-menu-wrapper.open .plus-menu {
+        display: flex;
+      }
+      .plus-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        border: none;
+        background: transparent;
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 14px;
+        padding: 9px 10px;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.12s ease;
+      }
+      .plus-menu-item:hover {
+        background: var(--bg-tertiary);
+      }
+      .plus-menu-item svg {
+        width: 17px;
+        height: 17px;
+        flex-shrink: 0;
+        color: var(--text-secondary);
+      }
+      .plus-menu-item.image-item svg {
+        color: var(--image-accent);
+      }
+
+      /* ========== Image generation mode ========== */
+      .image-mode-badge {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        background: var(--image-accent-muted);
+        color: var(--image-accent);
+        border: 1px solid var(--image-accent);
+        border-radius: 999px;
+        padding: 6px 6px 6px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .image-mode-badge.active { display: flex; }
+      .image-mode-badge button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border: none;
+        border-radius: 50%;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 15px;
+        line-height: 1;
+        padding: 0;
+      }
+      .image-mode-badge button:hover { background: rgba(255, 255, 255, 0.12); }
+
+      .input-wrapper.image-mode {
+        border-color: var(--image-accent);
+        box-shadow: 0 0 0 3px var(--image-accent-muted), var(--shadow-md);
+      }
 
       .attachments-preview {
         display: flex;
@@ -296,6 +393,9 @@
         --accent: #a78bfa;          /* soft purple like Grok */
         --accent-hover: #c4b5fd;
         --accent-muted: rgba(167, 139, 250, 0.15);
+
+        --image-accent: #34d1c4;    /* teal, distinct from chat accent */
+        --image-accent-muted: rgba(52, 209, 196, 0.15);
         
         --user-bubble: #2a2a32;
         --assistant-bubble: transparent;
@@ -1307,6 +1407,19 @@
         .input-area {
           padding: 12px 12px 20px;
         }
+        .plus-menu {
+          min-width: 160px;
+        }
+        .image-mode-badge span {
+          display: none;
+        }
+        .image-mode-badge {
+          padding: 6px;
+        }
+        .image-mode-badge::before {
+          content: "🎨";
+          font-size: 14px;
+        }
         .message.user .bubble {
           max-width: 90%;
         }
@@ -1344,12 +1457,32 @@
       <!-- Input -->
       <div class="input-area">
         <div class="attachments-preview" id="attachments-preview" style="display: none;"></div>
-        <div class="input-wrapper">
-          <button class="attach-btn" id="attach-btn" title="附加文件" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
-          </button>
+        <div class="input-wrapper" id="input-wrapper">
+          <div class="plus-menu-wrapper" id="plus-menu-wrapper">
+            <button class="attach-btn" id="attach-btn" title="更多" type="button" aria-haspopup="true" aria-expanded="false">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            </button>
+            <div class="plus-menu" id="plus-menu" role="menu">
+              <button class="plus-menu-item" id="menu-upload-file" type="button" role="menuitem">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                <span>上传文件</span>
+              </button>
+              <button class="plus-menu-item image-item" id="menu-generate-image" type="button" role="menuitem">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 16.5V6.75a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 16.5zm10.5-7.5h.008v.008h-.008V9z" />
+                </svg>
+                <span>生成图片</span>
+              </button>
+            </div>
+          </div>
+          <div class="image-mode-badge" id="image-mode-badge">
+            <span>图片生成</span>
+            <button id="image-mode-exit" type="button" title="退出图片生成模式">&times;</button>
+          </div>
           <textarea
             id="user-input"
             placeholder="有什么我可以帮你的？"
@@ -1362,7 +1495,7 @@
             </svg>
           </button>
         </div>
-        <div class="input-hint">Enter 发送 · Shift + Enter 换行 · 可拖拽或点击 📎 上传文件（文本、图片、PDF）</div>
+        <div class="input-hint">Enter 发送 · Shift + Enter 换行 · 点击 ➕ 上传文件或生成图片 · 也可直接拖拽文件到此处</div>
       </div>
     </div>
 

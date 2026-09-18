@@ -3406,26 +3406,6 @@ loadStringLib: loadStringLib,
         document.getElementById("runner-live-input").onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); accept(); } };
       }
 
-      function resetTerminalEcho() { window.__terminalEcho = ""; }
-
-      function appendTerminal(text) { window.__terminalEcho = (window.__terminalEcho || "") + text; var output = document.getElementById("runner-output"); if (output) { output.textContent = window.__terminalEcho; output.className = ""; output.parentElement && (output.parentElement.scrollTop = output.parentElement.scrollHeight); } }
-
-      var __stdinLines = [];
-      var __terminalEcho = "";
-      var __inputWaiter = null;
-
-      function resetTerminalEcho() { window.__terminalEcho = ""; }
-
-      function appendTerminal(text) {
-        window.__terminalEcho = (window.__terminalEcho || "") + text;
-        var output = document.getElementById("runner-output");
-        if (output) { output.textContent = window.__terminalEcho; output.className = ""; output.parentElement && (output.parentElement.scrollTop = output.parentElement.scrollHeight); }
-      }
-
-      var __stdinLines = [];
-      var __terminalEcho = "";
-      var __inputWaiter = null;
-
       function prepareStdinQueue(stdin) {
         window.__stdinLines = [];
         if (!stdin) return;
@@ -3447,12 +3427,29 @@ loadStringLib: loadStringLib,
         });
       }
 
-      function prepareStdinQueue(stdin) {
-        window.__stdinLines = [];
-        if (!stdin) return;
-        var normalized = String(stdin).replace(/\r\n/g, "\n");
-        window.__stdinLines = normalized.split("\n");
-        if (window.__stdinLines.length && window.__stdinLines[window.__stdinLines.length - 1] === "") window.__stdinLines.pop();
+      // JSCPP 的 cin 在程序启动时只会同步调用一次 drain() 取走全部输入，
+      // 运行过程中不会再次询问，因此无法做到"运行到 cin 才弹出输入框"。
+      // 这里退而求其次：在弹出输入框之前，先静态扫描源码中第一个 cin/scanf
+      // 之前的 cout 语句，把其中的字符串字面量抠出来先显示，让用户至少能
+      // 看到"请输入一个数字"这类提示语，而不是先看到输入框、后看到提示。
+      function extractLeadingPromptText(source) {
+        var idx = source.search(/\bcin\b|\bscanf\s*\(/);
+        var head = idx === -1 ? source : source.slice(0, idx);
+        var text = "";
+        var coutRe = /\bcout\s*((?:<<\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|endl|[A-Za-z_]\w*)\s*)+);/g;
+        var m;
+        while ((m = coutRe.exec(head))) {
+          var parts = m[1].split("<<").map(function (s) { return s.trim(); }).filter(Boolean);
+          parts.forEach(function (p) {
+            if (p === "endl") { text += "\n"; return; }
+            var strMatch = /^"((?:\\.|[^"\\])*)"$/.exec(p);
+            if (strMatch) { text += strMatch[1].replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\\\/g, "\\"); return; }
+            var charMatch = /^'((?:\\.|[^'\\])*)'$/.exec(p);
+            if (charMatch) { text += charMatch[1]; return; }
+            // 变量/表达式部分无法静态求值，跳过
+          });
+        }
+        return text;
       }
 
       async function runCppOrC(source, stdin) {
@@ -3466,7 +3463,12 @@ loadStringLib: loadStringLib,
         var inputbuffer = stdin ? String(stdin) : "";
 
         if (!inputbuffer.trim() && /\bcin\b|\bscanf\s*\(/.test(source)) {
-          appendTerminal("程序正在等待输入... (在下方终端输入后按 Enter)\n");
+          var leadingPrompt = extractLeadingPromptText(source);
+          if (leadingPrompt) {
+            appendTerminal(leadingPrompt);
+          } else {
+            appendTerminal("程序正在等待输入... (在下方终端输入后按 Enter)\n");
+          }
           var line = await asyncReadLine("");
           if (line !== null && line !== undefined) inputbuffer = String(line) + "\n";
         }
