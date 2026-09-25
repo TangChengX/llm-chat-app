@@ -485,36 +485,65 @@ function closePreview() {
   previewTitle.textContent = "预览";
 }
 
+let plusMenuCloseTimer = null;
+const PLUS_MENU_CLOSE_DELAY = 400; // 鼠标移开后延迟多久收起菜单
+
+function openPlusMenu() {
+  if (plusMenuCloseTimer) {
+    clearTimeout(plusMenuCloseTimer);
+    plusMenuCloseTimer = null;
+  }
+  plusMenuWrapper.classList.add("open");
+  attachBtn.setAttribute("aria-expanded", "true");
+}
+
+function closePlusMenuNow() {
+  if (plusMenuCloseTimer) {
+    clearTimeout(plusMenuCloseTimer);
+    plusMenuCloseTimer = null;
+  }
+  plusMenuWrapper.classList.remove("open");
+  attachBtn.setAttribute("aria-expanded", "false");
+}
+
+function closePlusMenuDelayed() {
+  if (plusMenuCloseTimer) clearTimeout(plusMenuCloseTimer);
+  plusMenuCloseTimer = setTimeout(() => {
+    plusMenuCloseTimer = null;
+    plusMenuWrapper.classList.remove("open");
+    attachBtn.setAttribute("aria-expanded", "false");
+  }, PLUS_MENU_CLOSE_DELAY);
+}
+
 function initPlusMenu() {
-  // 移动端没有 hover，用点击切换菜单展开/收起；桌面端可以用 CSS :hover，
-  // 但点击也要能正常工作（比如触屏笔记本），所以统一用 click 切换 "open" 类。
+  // 桌面端：鼠标移入立即展开，移开后延迟一段时间再收起（方便从按钮移动到菜单项）
+  plusMenuWrapper.addEventListener("mouseenter", openPlusMenu);
+  plusMenuWrapper.addEventListener("mouseleave", closePlusMenuDelayed);
+
+  // 移动端没有 hover，用点击切换菜单展开/收起
   attachBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const willOpen = !plusMenuWrapper.classList.contains("open");
-    plusMenuWrapper.classList.toggle("open", willOpen);
-    attachBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
-  });
-
-  // 点击菜单外部关闭菜单
-  document.addEventListener("click", (e) => {
-    if (!plusMenuWrapper.contains(e.target)) {
-      plusMenuWrapper.classList.remove("open");
-      attachBtn.setAttribute("aria-expanded", "false");
+    if (plusMenuWrapper.classList.contains("open")) {
+      closePlusMenuNow();
+    } else {
+      openPlusMenu();
     }
   });
 
-  function closeMenu() {
-    plusMenuWrapper.classList.remove("open");
-    attachBtn.setAttribute("aria-expanded", "false");
-  }
+  // 点击菜单外部立即关闭菜单
+  document.addEventListener("click", (e) => {
+    if (!plusMenuWrapper.contains(e.target)) {
+      closePlusMenuNow();
+    }
+  });
 
   menuUploadFile.addEventListener("click", () => {
-    closeMenu();
+    closePlusMenuNow();
     fileInput.click();
   });
 
   menuGenerateImage.addEventListener("click", () => {
-    closeMenu();
+    closePlusMenuNow();
     setImageGenMode(true);
     userInput.focus();
   });
@@ -746,8 +775,17 @@ async function sendImagePrompt() {
     bubble.classList.remove("is-thinking");
     const imgSrc = "data:image/jpeg;base64," + data.image;
     bubble.innerHTML =
-      '<img src="' + imgSrc + '" alt="' + escapeHtml(prompt) +
-      '" style="max-width:100%;border-radius:12px;display:block;" />';
+      '<div class="generated-image-wrap" title="点击查看大图">' +
+      '<img src="' + imgSrc + '" alt="' + escapeHtml(prompt) + '" />' +
+      '<div class="generated-image-overlay">' + PREVIEW_ICON + "</div>" +
+      "</div>";
+
+    const imageWrap = bubble.querySelector(".generated-image-wrap");
+    if (imageWrap) {
+      imageWrap.addEventListener("click", () => {
+        openPreview({ isImage: true, type: "image/jpeg", data: data.image, name: prompt });
+      });
+    }
 
     const copyBtn = assistantEl.querySelector(".msg-copy-btn");
     if (copyBtn) copyBtn.remove();

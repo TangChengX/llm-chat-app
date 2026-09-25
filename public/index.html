@@ -35,7 +35,6 @@
         border-color: #3f3f46;
       }
       .attach-btn svg { width: 18px; height: 18px; transition: transform 0.15s ease; }
-      .plus-menu-wrapper:hover .attach-btn svg,
       .plus-menu-wrapper.open .attach-btn svg {
         transform: rotate(45deg);
       }
@@ -61,7 +60,6 @@
         gap: 2px;
         z-index: 20;
       }
-      .plus-menu-wrapper:hover .plus-menu,
       .plus-menu-wrapper.open .plus-menu {
         display: flex;
       }
@@ -131,6 +129,39 @@
         border-color: var(--image-accent);
         box-shadow: 0 0 0 3px var(--image-accent-muted), var(--shadow-md);
       }
+
+      /* ========== Generated image preview ========== */
+      .generated-image-wrap {
+        position: relative;
+        display: inline-block;
+        max-width: 100%;
+        border-radius: 12px;
+        overflow: hidden;
+        cursor: pointer;
+        line-height: 0;
+      }
+      .generated-image-wrap img {
+        display: block;
+        max-width: 100%;
+        border-radius: 12px;
+      }
+      .generated-image-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        background: rgba(0, 0, 0, 0);
+        color: #fff;
+        opacity: 0;
+        transition: opacity 0.15s ease, background 0.15s ease;
+      }
+      .generated-image-wrap:hover .generated-image-overlay {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      .generated-image-overlay svg { width: 26px; height: 26px; }
 
       .attachments-preview {
         display: flex;
